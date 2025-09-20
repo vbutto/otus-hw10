@@ -9,7 +9,7 @@
 ###############################################
 
 data "yandex_compute_image" "ubuntu" {
-  family = "ubuntu-2004-lts"
+  family = "ubuntu-2404-lts"
 }
 
 # ---------------------
@@ -44,7 +44,7 @@ resource "yandex_vpc_security_group" "sg" {
     protocol       = "TCP"
     description    = "SSH"
     port           = 22
-    v4_cidr_blocks = [var.my_ip != "" ? var.my_ip : "0.0.0.0/0"]
+    v4_cidr_blocks = [var.my_ip]
   }
 
   ingress {
@@ -128,11 +128,11 @@ resource "yandex_resourcemanager_folder_iam_member" "audit_sa_at_viewer" {
 
 
 # === Дадим trail-SA право собирать логи на уровне облака ===
-resource "yandex_resourcemanager_cloud_iam_member" "audit_sa_at_viewer_cloud" {
-  cloud_id = var.cloud_id
-  role     = "audit-trails.viewer"
-  member   = "serviceAccount:${yandex_iam_service_account.audit_sa.id}"
-}
+#resource "yandex_resourcemanager_cloud_iam_member" "audit_sa_at_viewer_cloud" {
+#  cloud_id = var.cloud_id
+#  role     = "audit-trails.viewer"
+#  member   = "serviceAccount:${yandex_iam_service_account.audit_sa.id}"
+#}
 
 
 # Права только на загрузку в bucket
@@ -165,8 +165,6 @@ resource "yandex_audit_trails_trail" "trail" {
     object_prefix = "audit-logs"
   }
 
-
-
   filtering_policy {
     management_events_filter {
       resource_scope {
@@ -175,13 +173,30 @@ resource "yandex_audit_trails_trail" "trail" {
       }
       # included_events по умолчанию = все mgmt события сервиса; можно сузить при необходимости
     }
-    # Data events опущены намеренно, чтобы не упереться в неподдерживаемые сервисы
+
+    data_events_filter {
+      service = "compute" # список поддерживаемых сервисов см. доку
+      resource_scope {
+        resource_id   = var.folder_id
+        resource_type = "resource-manager.folder"
+      }
+    }
   }
 
   depends_on = [
-    yandex_resourcemanager_folder_iam_member.audit_sa_storage_uploader
+    yandex_resourcemanager_folder_iam_member.audit_sa_storage_uploader,
+    yandex_resourcemanager_folder_iam_member.audit_sa_at_viewer,
+    #yandex_resourcemanager_cloud_iam_member.audit_sa_at_viewer_cloud,
   ]
 }
+
+# Trail становится активным не сразу, а через некоторое время (до 5 минут по доке)
+# Добавим искусственную задержку, чтобы не создавать ВМ раньше времени
+resource "time_sleep" "wait_for_trail_activation" {
+  depends_on      = [yandex_audit_trails_trail.trail]
+  create_duration = "90s"
+}
+
 
 # ---------------------
 # Minimal VM
