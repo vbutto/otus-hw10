@@ -1,132 +1,106 @@
-# Роли сервисного аккаунта для terraform
-# vpc.privateAdmin - для управления сетями
-# vpc.publicAdmin - для управления внешними IP
-# iam.serviceAccounts.admin - для управления сервисными аккаунтами
-# securityGroups.admin - для управления security group
-# compute.admin - для управления ВМ
-# audit-trails.admin - для управления Audit Trail
-# storage.admin - для управления Object Storage
+###############################################
+# Pre-req (инфо):
+# Аккаунт, который запускает terraform, должен иметь на папке:
+#  - vpc.privateAdmin, vpc.publicAdmin, vpc.securityGroups.admin
+#  - compute.admin
+#  - iam.serviceAccounts.admin       (создание SAs)
+#  - audit-trails.admin              (создание trail)
+#  - storage.admin                   (создание bucket)
+###############################################
 
-# ============================================================================
-# HW10 - Аудит действий пользователей с виртуальными машинами
-# ============================================================================
-
-# Получаем образ Ubuntu
 data "yandex_compute_image" "ubuntu" {
   family = "ubuntu-2004-lts"
 }
 
-# ============================================================================
-# Сетевая инфраструктура
-# ============================================================================
-
-resource "yandex_vpc_network" "hw10_network" {
+# ---------------------
+# Network & Security
+# ---------------------
+resource "yandex_vpc_network" "net" {
   name        = "hw10-network"
   description = "Network for HW10 audit demo"
   folder_id   = var.folder_id
 }
 
-resource "yandex_vpc_subnet" "hw10_subnet" {
-  name           = "hw10-subnet"
-  zone           = var.zone
-  network_id     = yandex_vpc_network.hw10_network.id
-  v4_cidr_blocks = ["10.10.0.0/24"]
+resource "yandex_vpc_subnet" "subnet" {
+  name           = "hw10-subnet-a"
   folder_id      = var.folder_id
+  zone           = var.zone
+  network_id     = yandex_vpc_network.net.id
+  v4_cidr_blocks = ["10.10.0.0/24"]
 }
 
-# Security Group для ВМ
-resource "yandex_vpc_security_group" "hw10_sg" {
-  name       = "hw10-security-group"
-  network_id = yandex_vpc_network.hw10_network.id
+resource "yandex_vpc_security_group" "sg" {
+  name       = "hw10-sg"
   folder_id  = var.folder_id
+  network_id = yandex_vpc_network.net.id
 
   egress {
     protocol       = "ANY"
-    description    = "All outbound traffic"
+    description    = "Allow all outbound"
     v4_cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
     protocol       = "TCP"
-    description    = "SSH access"
-    v4_cidr_blocks = [var.my_ip != "" ? var.my_ip : "0.0.0.0/0"]
+    description    = "SSH"
     port           = 22
+    v4_cidr_blocks = [var.my_ip != "" ? var.my_ip : "0.0.0.0/0"]
   }
 
   ingress {
     protocol       = "ICMP"
-    description    = "ICMP ping"
+    description    = "Ping"
     v4_cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
-# ============================================================================
-# Сервисные аккаунты (два пользователя)
-# ============================================================================
-
-# Сервисный аккаунт - Пользователь 1
+# ---------------------
+# Service Accounts (симулируем двух пользователей)
+# ---------------------
 resource "yandex_iam_service_account" "user1" {
   name        = "hw10-user1"
-  description = "Service Account representing User1 - creator of VM"
+  description = "User1 - VM creator"
   folder_id   = var.folder_id
 }
 
-# Сервисный аккаунт - Пользователь 2  
 resource "yandex_iam_service_account" "user2" {
   name        = "hw10-user2"
-  description = "Service Account representing User2 - VM modifier"
+  description = "User2 - VM modifier"
   folder_id   = var.folder_id
 }
 
-# ============================================================================
-# IAM роли для пользователей
-# ============================================================================
-
-# Роли для User1 - создание и управление ВМ
+# Роли на папке: пользователи умеют управлять ВМ и сетью (user-level доступ)
 resource "yandex_resourcemanager_folder_iam_member" "user1_compute_admin" {
   folder_id = var.folder_id
   role      = "compute.admin"
   member    = "serviceAccount:${yandex_iam_service_account.user1.id}"
 }
-
 resource "yandex_resourcemanager_folder_iam_member" "user1_vpc_user" {
   folder_id = var.folder_id
   role      = "vpc.user"
   member    = "serviceAccount:${yandex_iam_service_account.user1.id}"
 }
 
-# Роли для User2 - управление ВМ
 resource "yandex_resourcemanager_folder_iam_member" "user2_compute_admin" {
   folder_id = var.folder_id
   role      = "compute.admin"
   member    = "serviceAccount:${yandex_iam_service_account.user2.id}"
 }
-
 resource "yandex_resourcemanager_folder_iam_member" "user2_vpc_user" {
   folder_id = var.folder_id
   role      = "vpc.user"
   member    = "serviceAccount:${yandex_iam_service_account.user2.id}"
 }
 
-# ============================================================================
-# Object Storage bucket для Audit Trail
-# ============================================================================
-
-# Сервисный аккаунт для Audit Trail
-resource "yandex_iam_service_account" "audit_sa" {
-  name        = "hw10-audit-sa"
-  description = "Service Account for Audit Trail"
-  folder_id   = var.folder_id
+# ---------------------
+# Object Storage for Audit logs
+# ---------------------
+resource "random_string" "bucket_suffix" {
+  length  = 8
+  upper   = false
+  special = false
 }
 
-# Роль для записи в Object Storage
-resource "yandex_resourcemanager_folder_iam_member" "audit_storage_uploader" {
-  folder_id = var.folder_id
-  role      = "storage.uploader"
-  member    = "serviceAccount:${yandex_iam_service_account.audit_sa.id}"
-}
-
-# Object Storage bucket для хранения логов аудита
 resource "yandex_storage_bucket" "audit_bucket" {
   bucket        = "hw10-audit-logs-${random_string.bucket_suffix.result}"
   folder_id     = var.folder_id
@@ -138,29 +112,46 @@ resource "yandex_storage_bucket" "audit_bucket" {
   }
 }
 
-# Random строка для уникальности имени bucket
-resource "random_string" "bucket_suffix" {
-  length  = 8
-  special = false
-  upper   = false
+# SA, от имени которого Trail пишет в Object Storage
+resource "yandex_iam_service_account" "audit_sa" {
+  name        = "hw10-audit-sa"
+  description = "Service Account for Audit Trails writer"
+  folder_id   = var.folder_id
 }
 
-# ============================================================================
-# Audit Trail (исправленная версия с правильным синтаксисом)
-# ============================================================================
-
-# Дополнительные роли для Audit Trail
-resource "yandex_resourcemanager_folder_iam_member" "audit_trails_admin" {
+# Разрешаем trail-сервисному аккаунту СБОР логов в заданной папке
+resource "yandex_resourcemanager_folder_iam_member" "audit_sa_at_viewer" {
   folder_id = var.folder_id
-  role      = "audit-trails.admin"
+  role      = "audit-trails.viewer"
   member    = "serviceAccount:${yandex_iam_service_account.audit_sa.id}"
 }
 
-# Исправленная версия Audit Trail
-resource "yandex_audit_trails_trail" "hw10_audit" {
+
+# === Дадим trail-SA право собирать логи на уровне облака ===
+resource "yandex_resourcemanager_cloud_iam_member" "audit_sa_at_viewer_cloud" {
+  cloud_id = var.cloud_id
+  role     = "audit-trails.viewer"
+  member   = "serviceAccount:${yandex_iam_service_account.audit_sa.id}"
+}
+
+
+# Права только на загрузку в bucket
+resource "yandex_resourcemanager_folder_iam_member" "audit_sa_storage_uploader" {
+  folder_id = var.folder_id
+  role      = "storage.uploader"
+  member    = "serviceAccount:${yandex_iam_service_account.audit_sa.id}"
+}
+
+
+
+
+# ---------------------
+# Audit Trail (только management events по папке)
+# ---------------------
+resource "yandex_audit_trails_trail" "trail" {
   name        = "hw10-audit-trail"
   folder_id   = var.folder_id
-  description = "Audit trail for HW10 - tracking user actions with VM"
+  description = "Audit trail for HW10 - VM user actions"
 
   labels = {
     environment = "homework"
@@ -174,60 +165,52 @@ resource "yandex_audit_trails_trail" "hw10_audit" {
     object_prefix = "audit-logs"
   }
 
-  # Используем новый синтаксис filtering_policy
+
+
   filtering_policy {
     management_events_filter {
       resource_scope {
         resource_id   = var.folder_id
         resource_type = "resource-manager.folder"
       }
+      # included_events по умолчанию = все mgmt события сервиса; можно сузить при необходимости
     }
-    data_events_filter {
-      service = "compute"
-      resource_scope {
-        resource_id   = var.folder_id
-        resource_type = "resource-manager.folder"
-      }
-      included_events = ["*"]
-    }
+    # Data events опущены намеренно, чтобы не упереться в неподдерживаемые сервисы
   }
 
   depends_on = [
-    yandex_resourcemanager_folder_iam_member.audit_trails_admin,
-    yandex_storage_bucket.audit_bucket
+    yandex_resourcemanager_folder_iam_member.audit_sa_storage_uploader
   ]
 }
 
-# ============================================================================
-# Виртуальная машина (минимальная конфигурация)
-# ============================================================================
-
-resource "yandex_compute_instance" "hw10_vm" {
+# ---------------------
+# Minimal VM
+# ---------------------
+resource "yandex_compute_instance" "vm" {
   name        = "hw10-demo-vm"
-  platform_id = "standard-v3"
-  zone        = var.zone
-  folder_id   = var.folder_id
   hostname    = "hw10-vm"
+  folder_id   = var.folder_id
+  zone        = var.zone
+  platform_id = "standard-v3"
 
-  # Минимальная конфигурация
   resources {
     cores         = 2
-    memory        = 1  # 1 GB RAM - минимум
-    core_fraction = 20 # 20% CPU - минимум для standard-v3
+    memory        = 1
+    core_fraction = 20
   }
 
   boot_disk {
     initialize_params {
       image_id = data.yandex_compute_image.ubuntu.id
-      size     = 10            # 10 GB - минимальный размер диска
-      type     = "network-hdd" # Самый дешевый тип диска
+      type     = "network-hdd"
+      size     = 10
     }
   }
 
   network_interface {
-    subnet_id          = yandex_vpc_subnet.hw10_subnet.id
+    subnet_id          = yandex_vpc_subnet.subnet.id
     nat                = true
-    security_group_ids = [yandex_vpc_security_group.hw10_sg.id]
+    security_group_ids = [yandex_vpc_security_group.sg.id]
   }
 
   metadata = {
@@ -241,12 +224,10 @@ resource "yandex_compute_instance" "hw10_vm" {
           sudo: ['ALL=(ALL) NOPASSWD:ALL']
           ssh_authorized_keys:
             - ${var.ssh_public_key}
-      
       packages:
         - htop
         - curl
         - wget
-        
       runcmd:
         - echo "HW10 Demo VM initialized at $(date)" > /var/log/hw10-init.log
         - systemctl enable ssh
@@ -259,57 +240,4 @@ resource "yandex_compute_instance" "hw10_vm" {
     project     = "hw10"
     created_by  = "user1"
   }
-
-  # Предотвращаем случайное удаление
-  lifecycle {
-    prevent_destroy = false
-  }
-}
-
-# ============================================================================
-# Статические ключи доступа для Object Storage
-# ============================================================================
-
-resource "yandex_iam_service_account_static_access_key" "audit_sa_key" {
-  service_account_id = yandex_iam_service_account.audit_sa.id
-  description        = "Static access key for audit trail bucket"
-}
-
-# ============================================================================
-# Outputs
-# ============================================================================
-
-output "vm_id" {
-  description = "ID виртуальной машины"
-  value       = yandex_compute_instance.hw10_vm.id
-}
-
-output "vm_external_ip" {
-  description = "Внешний IP виртуальной машины"
-  value       = yandex_compute_instance.hw10_vm.network_interface.0.nat_ip_address
-}
-
-output "vm_internal_ip" {
-  description = "Внутренний IP виртуальной машины"
-  value       = yandex_compute_instance.hw10_vm.network_interface.0.ip_address
-}
-
-output "user1_service_account_id" {
-  description = "ID сервисного аккаунта User1"
-  value       = yandex_iam_service_account.user1.id
-}
-
-output "user2_service_account_id" {
-  description = "ID сервисного аккаунта User2"
-  value       = yandex_iam_service_account.user2.id
-}
-
-output "audit_trail_id" {
-  description = "ID Audit Trail"
-  value       = yandex_audit_trails_trail.hw10_audit.id
-}
-
-output "audit_bucket_name" {
-  description = "Имя bucket для audit логов"
-  value       = yandex_storage_bucket.audit_bucket.bucket
 }
