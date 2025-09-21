@@ -59,38 +59,91 @@ resource "yandex_vpc_security_group" "sg" {
 # ---------------------
 resource "yandex_iam_service_account" "user1" {
   name        = "hw10-user1"
-  description = "User1 - VM creator"
+  description = "User1"
   folder_id   = var.folder_id
 }
 
 resource "yandex_iam_service_account" "user2" {
   name        = "hw10-user2"
-  description = "User2 - VM modifier"
+  description = "User2"
   folder_id   = var.folder_id
 }
 
-# Роли на папке: пользователи умеют управлять ВМ и сетью (user-level доступ)
+resource "yandex_iam_service_account_key" "user1_key" {
+  service_account_id = yandex_iam_service_account.user1.id
+  description        = "TF key for hw10-user1"
+  lifecycle { prevent_destroy = false }
+}
+
+resource "local_sensitive_file" "user1_key_json" {
+  filename        = var.sa_user1_key_file # напр. "keys/hw10-user1.json"
+  file_permission = "0600"
+  content = jsonencode({
+    id                 = yandex_iam_service_account_key.user1_key.id
+    service_account_id = yandex_iam_service_account_key.user1_key.service_account_id
+    created_at         = yandex_iam_service_account_key.user1_key.created_at
+    key_algorithm      = yandex_iam_service_account_key.user1_key.key_algorithm
+    public_key         = yandex_iam_service_account_key.user1_key.public_key
+    private_key        = yandex_iam_service_account_key.user1_key.private_key
+  })
+}
+
+# --- user2 ---
+resource "yandex_iam_service_account_key" "user2_key" {
+  service_account_id = yandex_iam_service_account.user2.id
+  description        = "TF key for hw10-user2"
+  lifecycle { prevent_destroy = false }
+}
+
+resource "local_sensitive_file" "user2_key_json" {
+  filename        = var.sa_user2_key_file # напр. "keys/hw10-user2.json"
+  file_permission = "0600"
+  content = jsonencode({
+    id                 = yandex_iam_service_account_key.user2_key.id
+    service_account_id = yandex_iam_service_account_key.user2_key.service_account_id
+    created_at         = yandex_iam_service_account_key.user2_key.created_at
+    key_algorithm      = yandex_iam_service_account_key.user2_key.key_algorithm
+    public_key         = yandex_iam_service_account_key.user2_key.public_key
+    private_key        = yandex_iam_service_account_key.user2_key.private_key
+  })
+}
+
+
+# Роли на папке: пользователи умеют управлять ВМ и сетью
 resource "yandex_resourcemanager_folder_iam_member" "user1_compute_admin" {
   folder_id = var.folder_id
   role      = "compute.admin"
   member    = "serviceAccount:${yandex_iam_service_account.user1.id}"
 }
-resource "yandex_resourcemanager_folder_iam_member" "user1_vpc_user" {
+resource "yandex_resourcemanager_folder_iam_member" "user1_vpc_privateAdmin" {
   folder_id = var.folder_id
-  role      = "vpc.user"
+  role      = "vpc.privateAdmin"
   member    = "serviceAccount:${yandex_iam_service_account.user1.id}"
 }
+
+resource "yandex_resourcemanager_folder_iam_member" "user1_vpc_publicAdmin" {
+  folder_id = var.folder_id
+  role      = "vpc.publicAdmin"
+  member    = "serviceAccount:${yandex_iam_service_account.user1.id}"
+}
+
 
 resource "yandex_resourcemanager_folder_iam_member" "user2_compute_admin" {
   folder_id = var.folder_id
   role      = "compute.admin"
   member    = "serviceAccount:${yandex_iam_service_account.user2.id}"
 }
-resource "yandex_resourcemanager_folder_iam_member" "user2_vpc_user" {
+resource "yandex_resourcemanager_folder_iam_member" "user2_vpc_privateAdmin" {
   folder_id = var.folder_id
-  role      = "vpc.user"
+  role      = "vpc.privateAdmin"
   member    = "serviceAccount:${yandex_iam_service_account.user2.id}"
 }
+resource "yandex_resourcemanager_folder_iam_member" "user2_vpc_publicAdmin" {
+  folder_id = var.folder_id
+  role      = "vpc.publicAdmin"
+  member    = "serviceAccount:${yandex_iam_service_account.user2.id}"
+}
+
 
 # ---------------------
 # Object Storage for Audit logs
@@ -126,13 +179,6 @@ resource "yandex_resourcemanager_folder_iam_member" "audit_sa_at_viewer" {
   member    = "serviceAccount:${yandex_iam_service_account.audit_sa.id}"
 }
 
-
-# === Дадим trail-SA право собирать логи на уровне облака ===
-#resource "yandex_resourcemanager_cloud_iam_member" "audit_sa_at_viewer_cloud" {
-#  cloud_id = var.cloud_id
-#  role     = "audit-trails.viewer"
-#  member   = "serviceAccount:${yandex_iam_service_account.audit_sa.id}"
-#}
 
 
 # Права только на загрузку в bucket
@@ -186,7 +232,6 @@ resource "yandex_audit_trails_trail" "trail" {
   depends_on = [
     yandex_resourcemanager_folder_iam_member.audit_sa_storage_uploader,
     yandex_resourcemanager_folder_iam_member.audit_sa_at_viewer,
-    #yandex_resourcemanager_cloud_iam_member.audit_sa_at_viewer_cloud,
   ]
 }
 
@@ -253,6 +298,7 @@ resource "yandex_compute_instance" "vm" {
   labels = {
     environment = "homework"
     project     = "hw10"
-    created_by  = "user1"
+    created_by  = "terraform"
+    step        = "0"
   }
 }

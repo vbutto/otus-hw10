@@ -38,3 +38,23 @@ variable "my_ip" {
   type        = string
   default     = ""
 }
+
+###############################################
+# Ключи сервисных аккаунтов (JSON выгрузка)
+###############################################
+
+variable "sa_user1_key_file" {
+  description = "Путь для JSON-ключа hw10-user1"
+  type        = string
+  default     = "keys/hw10-user1.json"
+}
+variable "sa_user2_key_file" {
+  description = "Путь для JSON-ключа hw10-user2"
+  type        = string
+  default     = "keys/hw10-user2.json"
+}
+variable "sa_audit_key_file" {
+  description = "Путь для JSON-ключа hw10-audit-sa"
+  type        = string
+  default     = "keys/hw10-audit-sa.json"
+}

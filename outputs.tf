@@ -26,3 +26,11 @@ output "audit_bucket_name" {
   value       = yandex_storage_bucket.audit_bucket.bucket
   description = "Bucket name for audit logs"
 }
+output "security_group_id" {
+  description = "ID созданной security group (hw10-sg)"
+  value       = yandex_vpc_security_group.sg.id
+}
+output "subnet_id" {
+  description = "ID созданной подсети (hw10-subnet-a)"
+  value       = yandex_vpc_subnet.subnet.id
+}
